@@ -109,6 +109,38 @@ Tip: deploy with `DRY_RUN=true`, push a job, and watch the logs (`queued job …
 - **Never point a self-hosted runner at a public repo.** Anyone who opens a PR can run arbitrary code on it and exfiltrate your `ACCESS_TOKEN`. Use private repos, and require approval for outside-collaborator PRs (Settings → Actions → *Fork pull request workflows*).
 - Ephemeral runners (default) auto-deregister after each job; Railway's `ALWAYS` restart policy (set in [`railway.json`](railway.json)) brings up a fresh one for the next job.
 
+## Building Docker images (experimental)
+
+Railway blocks privileged containers and the Docker daemon, so normal `docker build` / `docker/setup-buildx-action` jobs **fail** on these runners. The **`railrunner-builder`** image ([`Dockerfile.builder`](Dockerfile.builder)) adds [Buildah](https://buildah.io), which builds images **without a daemon** — set up for the most restricted case (rootless, `vfs` storage, `chroot` isolation).
+
+> ⚠️ Whether even this works depends on Railway allowing **unprivileged user namespaces**, which it may block. **Confirm with the one-step probe below before converting real jobs.**
+
+Point your runner at the builder image (deploy `ghcr.io/thevedus/railrunner-builder`, or build `Dockerfile.builder`), then:
+
+**1. Probe that builds work at all:**
+```yaml
+probe:
+  runs-on: [self-hosted, railrunner]
+  steps:
+    - run: |
+        printf 'FROM alpine\nRUN echo ok > /ok\n' > Dockerfile.probe
+        buildah bud -f Dockerfile.probe -t probe:local .
+        echo "BUILDAH WORKS ON RAILWAY ✅"
+```
+If it fails with a namespace / `newuidmap` / permission error, Railway's sandbox doesn't allow it — offload the build instead (remote BuildKit on a cheap VPS, Depot, or `ubuntu-latest` for the docker jobs).
+
+**2. If the probe passes, replace `docker build` with Buildah** (a drop-in):
+```yaml
+- name: Build & push
+  env:
+    IMAGE: ghcr.io/${{ github.repository_owner }}/your-image:${{ github.sha }}
+  run: |
+    echo "${{ secrets.GITHUB_TOKEN }}" | buildah login -u "${{ github.actor }}" --password-stdin ghcr.io
+    buildah bud -t "$IMAGE" -f Dockerfile .
+    buildah push "$IMAGE"
+```
+`STORAGE_DRIVER=vfs` and `BUILDAH_ISOLATION=chroot` are baked into the image, so plain `buildah bud` uses them.
+
 ## Run locally
 
 ```bash

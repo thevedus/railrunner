@@ -33,6 +33,9 @@ jobs:
           - context: "autoscaler"
             file: "autoscaler/Dockerfile"
             image: "railrunner-autoscaler"
+          - context: "."
+            file: "Dockerfile.builder"
+            image: "railrunner-builder"
     steps:
       - uses: actions/checkout@v4
       - uses: docker/login-action@v3
