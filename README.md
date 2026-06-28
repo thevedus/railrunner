@@ -82,6 +82,27 @@ It **polls** every ~20s and is **stateless** — each check recomputes the targe
 
 Tip: deploy with `DRY_RUN=true` and read the logs (`demand=… -> desired=…`) until you trust it, then turn it off.
 
+### Configuring the variables on Railway
+
+Railway's **Suggested Variables** panel only auto-detects variables referenced directly in the code, so it under-suggests. Set this exact list — add the three it misses, remove the two it shouldn't offer:
+
+| Variable | Set to | |
+|---|---|---|
+| `GITHUB_TOKEN` | a GitHub PAT with **Actions: Read** on the repo | ➕ add (not detected) |
+| `REPO_URL` | `https://github.com/<owner>/<repo>` | ➕ add (not detected) |
+| `RUNNER_SERVICE_ID` | the **runner** service's ID | ➕ add (not detected) |
+| `RAILWAY_TOKEN` | the project token (Railway pre-fills one) | ✅ keep |
+| `RUNNER_REGION` | your runner's region, e.g. `us-west` | ✅ keep — fill the value |
+| `DRY_RUN` | `true` to start | ✅ keep |
+| `RAILWAY_API_TOKEN` | — | ❌ remove — only one Railway token is allowed; both set makes the CLI error |
+| `RAILWAY_CLI_VERSION` | — | ❌ remove — build-time `ARG`, not a runtime variable |
+
+Finding the values:
+
+- **`RUNNER_SERVICE_ID`** — open the **runner** service and copy the UUID from its URL: `railway.com/project/…/service/`**`<this-id>`**. Not the autoscaler's own ID — Railway already injects that as `RAILWAY_SERVICE_ID`, which is exactly why this one is named `RUNNER_SERVICE_ID`.
+- **`RUNNER_REGION`** — runner service → Settings → Regions.
+- **`RAILWAY_TOKEN`** — keep Railway's pre-filled value, or mint one under Project → Settings → Tokens. It's a secret — don't commit or share it.
+
 ### What it deliberately keeps simple
 
 - **Demand is counted per workflow _run_** (one cheap API call each for queued + in-progress). A single run with many matrix jobs counts once — `MAX` caps the gap and the warm pool drains the rest. Per-job counting is the obvious upgrade.
