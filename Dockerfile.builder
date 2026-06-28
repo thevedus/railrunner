@@ -10,7 +10,6 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends buildah uidmap slirp4netns ca-certificates \
  && printf 'runner:100000:65536\n' > /etc/subuid \
  && printf 'runner:100000:65536\n' > /etc/subgid \
- && printf '[storage]\ndriver = "vfs"\n' > /etc/containers/storage.conf \
  && buildah --version \
  && rm -rf /var/lib/apt/lists/*
 
