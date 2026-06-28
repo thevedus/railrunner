@@ -40,7 +40,14 @@ function intEnv(key: string, fallback: number): number {
 
 /** Apply the replica count by shelling out to the Railway CLI. */
 async function railwayScale(serviceId: string, region: string, n: number, dryRun: boolean): Promise<void> {
-  const args = ["scale", "--service", serviceId, `${region}=${n}`];
+  // An account/workspace token (RAILWAY_API_TOKEN) isn't scoped to a project, so
+  // tell the CLI which project + environment to act on. Railway injects both into
+  // this service for free. (Harmless when a project token is used instead.)
+  const args = ["scale", "--service", serviceId];
+  if (process.env.RAILWAY_PROJECT_ID) args.push("--project", process.env.RAILWAY_PROJECT_ID);
+  const envRef = process.env.RAILWAY_ENVIRONMENT_ID ?? process.env.RAILWAY_ENVIRONMENT;
+  if (envRef) args.push("--environment", envRef);
+  args.push(`${region}=${n}`);
   if (dryRun) { console.log(`[dry-run] railway ${args.join(" ")}`); return; }
   const proc = Bun.spawn(["railway", ...args], { stdout: "pipe", stderr: "pipe" });
   const [code, out, err] = await Promise.all([
@@ -64,8 +71,8 @@ function main(): void {
   const port = intEnv("PORT", 8080);
   const dryRun = (process.env.DRY_RUN ?? "false").toLowerCase() === "true";
 
-  if (!process.env.RAILWAY_TOKEN && !process.env.RAILWAY_API_TOKEN) {
-    console.error("Missing RAILWAY_TOKEN — create a Railway project token so the railway CLI can scale.");
+  if (!process.env.RAILWAY_API_TOKEN && !process.env.RAILWAY_TOKEN) {
+    console.error("Missing RAILWAY_API_TOKEN — create a Railway account or workspace token so the railway CLI can scale (a project token returns 'Unauthorized').");
     process.exit(1);
   }
   if (min > max) { console.error(`MIN_RUNNERS (${min}) > MAX_RUNNERS (${max})`); process.exit(1); }

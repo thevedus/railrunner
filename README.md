@@ -66,19 +66,19 @@ It's **event-driven** (no API polling, so no rate limits), **job-accurate** (cou
 
 1. In the **same Railway project** as your runner, add another service from this repo and set its **Root Directory** to `autoscaler`.
 2. Give it a public URL: Service → Settings → Networking → **Generate Domain** → enter port **`8080`** (what the autoscaler listens on), then copy the URL. *(The server binds `$PORT`, default `8080`; pin it by also setting a `PORT=8080` variable so the listening port and the domain port can't drift.)*
-3. Add the env vars below (full list in [`autoscaler/.env.example`](autoscaler/.env.example)) — including a `GITHUB_WEBHOOK_SECRET` you choose and a `RAILWAY_TOKEN` (Project → Settings → Tokens).
+3. Add the env vars below (full list in [`autoscaler/.env.example`](autoscaler/.env.example)) — including a `GITHUB_WEBHOOK_SECRET` you choose and a `RAILWAY_API_TOKEN` (Account or Workspace → Settings → Tokens — **not** a project token).
 4. Add the webhook in GitHub — **repo** *or* **org** → Settings → Webhooks → Add webhook:
    - **Payload URL**: your Railway domain (e.g. `https://xxx.up.railway.app/`)
    - **Content type**: `application/json`
    - **Secret**: the same `GITHUB_WEBHOOK_SECRET`
    - **Events**: "Let me select individual events" → **Workflow jobs** only
 
-   > Railway's "Suggested Variables" can't auto-detect every variable — add `GITHUB_WEBHOOK_SECRET` and `RUNNER_SERVICE_ID` yourself, and don't set `RAILWAY_API_TOKEN` (only one Railway token is allowed) or `RAILWAY_CLI_VERSION` (build-time only).
+   > Railway's "Suggested Variables" can't auto-detect every variable — add `GITHUB_WEBHOOK_SECRET` and `RUNNER_SERVICE_ID` yourself. Put an **account/workspace** token in `RAILWAY_API_TOKEN` (a *project* token in `RAILWAY_TOKEN` returns "Unauthorized" when scaling); set only one. `RAILWAY_CLI_VERSION` is build-time only.
 
 | Variable | Default | What |
 |---|---|---|
 | `GITHUB_WEBHOOK_SECRET` | — | shared secret; must match the webhook's **Secret** |
-| `RAILWAY_TOKEN` | — | a Railway **project token** (lets the CLI scale) |
+| `RAILWAY_API_TOKEN` | — | a Railway **account or workspace** token; a *project* token returns "Unauthorized" when scaling |
 | `RUNNER_SERVICE_ID` | — | the **runner** service's ID (Service → Settings) |
 | `RUNNER_REGION` | `us-west` | region your runner runs in (`us-west`, `us-east`, `eu-west`, `southeast-asia`) |
 | `RUNNER_LABELS` | `railrunner` | only count jobs whose `runs-on` includes these labels |
@@ -93,12 +93,12 @@ Tip: deploy with `DRY_RUN=true`, push a job, and watch the logs (`queued job …
 
 - **`RUNNER_SERVICE_ID`** — open the **runner** service and copy the UUID from its URL: `railway.com/project/…/service/`**`<this-id>`**. Not the autoscaler's own ID — Railway already injects that as `RAILWAY_SERVICE_ID`, which is exactly why this one is named `RUNNER_SERVICE_ID`.
 - **`RUNNER_REGION`** — runner service → Settings → Regions.
-- **`RAILWAY_TOKEN`** — mint one under Project → Settings → Tokens (or keep Railway's pre-filled value). It's a secret — don't commit or share it.
+- **`RAILWAY_API_TOKEN`** — an **account** token (Account → Settings → Tokens) or **workspace** token (Workspace → Settings → Tokens). A *project* token (`RAILWAY_TOKEN`) is deploy-scoped and returns "Unauthorized" when scaling. It's a secret — don't commit or share it.
 
 ### What it deliberately keeps simple
 
 - **Job-accurate and label-filtered** — each `workflow_job` is counted by its `id`, and only if its labels include every entry in `RUNNER_LABELS` — so it ignores GitHub-hosted jobs and counts matrix jobs individually.
-- **No polling, no GitHub token** — GitHub pushes the events, so there's no API rate limit and one org webhook scales the whole org. The only credentials it needs are the Railway token (to scale) and the webhook secret (to trust GitHub).
+- **No polling, no GitHub token** — GitHub pushes the events, so there's no API rate limit and one org webhook scales the whole org. The only credentials it needs are a Railway **account/workspace** token (to scale) and the webhook secret (to trust GitHub).
 - **In-memory state, self-healing** — the active-job set lives in memory; a missed `completed` event is cleaned up by `JOB_TTL_SECONDS`, and a restart briefly drops to `MIN_RUNNERS` then rebuilds as new events arrive (Railway's graceful drain means running jobs are never killed).
 - **Single region** — it scales `RUNNER_REGION` only.
 - Bursts (a big matrix) are coalesced into one scale call; the whole server is ~120 lines in [`autoscaler/autoscale.ts`](autoscaler/autoscale.ts).
