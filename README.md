@@ -64,7 +64,9 @@ It **polls** every ~20s and is **stateless** — each check recomputes the targe
 
 1. In the **same Railway project** as your runner, add another service from this repo.
 2. Set its **Root Directory** to `autoscaler`.
-3. Create a Railway **project token** (Project → Settings → Tokens) and add the env vars below.
+3. Create a Railway **project token** (Project → Settings → Tokens) and add the env vars below (full copy-paste list in [`autoscaler/.env.example`](autoscaler/.env.example)).
+
+   > Railway's "Suggested Variables" only auto-detects some of these — add `GITHUB_TOKEN`, `REPO_URL`, and `RUNNER_SERVICE_ID` yourself, and don't set `RAILWAY_API_TOKEN` (only one Railway token is allowed) or `RAILWAY_CLI_VERSION` (build-time only).
 
 | Variable | Default | What |
 |---|---|---|
