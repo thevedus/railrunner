@@ -1,0 +1,5 @@
+# Runner runtime artifacts (only appear if you run the runner outside a container)
+_diag/
+.runner
+.credentials*
+*.log

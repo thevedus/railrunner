@@ -1,0 +1,4 @@
+# Shell scripts must stay LF or the container shebang breaks on Windows checkouts.
+*.sh text eol=lf
+Dockerfile text eol=lf
+entrypoint.sh text eol=lf
