@@ -38,28 +38,40 @@ function intEnv(key: string, fallback: number): number {
   return n;
 }
 
-/** Apply the replica count by shelling out to the Railway CLI. */
-async function railwayScale(serviceId: string, region: string, n: number, dryRun: boolean): Promise<void> {
-  // An account/workspace token (RAILWAY_API_TOKEN) isn't scoped to a project, so
-  // tell the CLI which project + environment to act on. Railway injects both into
-  // this service for free. (Harmless when a project token is used instead.)
-  const args = ["scale", "--service", serviceId];
-  if (process.env.RAILWAY_PROJECT_ID) args.push("--project", process.env.RAILWAY_PROJECT_ID);
-  const envRef = process.env.RAILWAY_ENVIRONMENT_ID ?? process.env.RAILWAY_ENVIRONMENT;
-  if (envRef) args.push("--environment", envRef);
-  args.push(`${region}=${n}`);
-  if (dryRun) { console.log(`[dry-run] railway ${args.join(" ")}`); return; }
+/** Run a railway CLI command; throw with its output on failure. */
+async function railway(args: string[]): Promise<string> {
   const proc = Bun.spawn(["railway", ...args], { stdout: "pipe", stderr: "pipe" });
   const [code, out, err] = await Promise.all([
     proc.exited,
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
   ]);
-  if (code !== 0) throw new Error(`railway scale failed (exit ${code}): ${(err || out).trim()}`);
-  console.log(`scaled ${serviceId} -> ${region}=${n}`);
+  if (code !== 0) throw new Error(`railway ${args[0]} failed (exit ${code}): ${(err || out).trim()}`);
+  return (out || err).trim();
 }
 
-function main(): void {
+/** Link this project + environment + service so `railway scale` has context.
+ * The CLI's `scale --project/--environment` flags don't set context on their own
+ * (scale needs a *linked* project); Railway injects these IDs into the service. */
+async function railwayLink(serviceId: string): Promise<void> {
+  const project = process.env.RAILWAY_PROJECT_ID;
+  const env = process.env.RAILWAY_ENVIRONMENT_ID ?? process.env.RAILWAY_ENVIRONMENT;
+  if (!project || !env) {
+    console.warn("RAILWAY_PROJECT_ID / RAILWAY_ENVIRONMENT_ID not set — can't link; scaling will fail. (Running outside Railway?)");
+    return;
+  }
+  await railway(["link", "--project", project, "--environment", env, "--service", serviceId]);
+  console.log(`linked project=${project} env=${env} service=${serviceId}`);
+}
+
+/** Set the linked runner service's replica count in one region. */
+async function railwayScale(region: string, n: number, dryRun: boolean): Promise<void> {
+  if (dryRun) { console.log(`[dry-run] railway scale ${region}=${n}`); return; }
+  await railway(["scale", `${region}=${n}`]);
+  console.log(`scaled -> ${region}=${n}`);
+}
+
+async function main(): Promise<void> {
   const secret = reqEnv("GITHUB_WEBHOOK_SECRET");
   const serviceId = reqEnv("RUNNER_SERVICE_ID");
   const region = process.env.RUNNER_REGION ?? "us-west";
@@ -92,7 +104,7 @@ function main(): void {
       do {
         dirty = false;
         const want = desiredReplicas(jobs.size, min, max);
-        if (want !== applied) { await railwayScale(serviceId, region, want, dryRun); applied = want; }
+        if (want !== applied) { await railwayScale(region, want, dryRun); applied = want; }
       } while (dirty);
     } catch (e) {
       console.error("scale error:", (e as Error).message);
@@ -113,6 +125,9 @@ function main(): void {
     for (const [id, exp] of jobs) if (exp <= now) { jobs.delete(id); changed = true; }
     if (changed) scheduleScale();
   }, 60_000);
+
+  // Establish project/environment/service context so `railway scale` works.
+  try { await railwayLink(serviceId); } catch (e) { console.error("link error:", (e as Error).message); }
 
   Bun.serve({
     port,
@@ -149,4 +164,4 @@ function main(): void {
   void applyScale(); // establish the MIN floor on boot
 }
 
-if (import.meta.main) main();
+if (import.meta.main) await main();
