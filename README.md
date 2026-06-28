@@ -49,6 +49,45 @@ jobs:
     runs-on: [self-hosted, railrunner]
 ```
 
+## Autoscaling (optional)
+
+Run a second tiny service that watches your job queue and adjusts how many runner replicas Railway runs — up under load, back down (even to zero) when idle.
+
+```
+GitHub Actions          autoscaler (autoscaler/)                    Railway
+  queued jobs  ──poll──▶  desired = clamp(demand, MIN, MAX)  ──scale──▶  runner replicas
+```
+
+It **polls** every ~20s and is **stateless** — each check recomputes the target from GitHub, so there's nothing to drift out of sync. Scaling goes through the `railway` CLI, which applies the change gracefully: new replicas start on the existing image, and drained ones finish their current job first.
+
+### Deploy it
+
+1. In the **same Railway project** as your runner, add another service from this repo.
+2. Set its **Root Directory** to `autoscaler`.
+3. Create a Railway **project token** (Project → Settings → Tokens) and add the env vars below.
+
+| Variable | Default | What |
+|---|---|---|
+| `GITHUB_TOKEN` | — | PAT with **Actions: Read** on the repo |
+| `REPO_URL` | — | `https://github.com/owner/repo` to watch |
+| `RAILWAY_TOKEN` | — | a Railway **project token** (lets the CLI scale) |
+| `RUNNER_SERVICE_ID` | — | the **runner** service's ID (Service → Settings) |
+| `RUNNER_REGION` | `us-west` | region your runner runs in (`us-west`, `us-east`, `eu-west`, `southeast-asia`) |
+| `MIN_RUNNERS` | `1` | floor — set `0` to scale to zero when idle |
+| `MAX_RUNNERS` | `5` | ceiling (safety cap) |
+| `POLL_SECONDS` | `20` | how often to check |
+| `DRY_RUN` | `false` | log decisions without scaling — flip on first to watch it think |
+
+Tip: deploy with `DRY_RUN=true` and read the logs (`demand=… -> desired=…`) until you trust it, then turn it off.
+
+### What it deliberately keeps simple
+
+- **Demand is counted per workflow _run_** (one cheap API call each for queued + in-progress). A single run with many matrix jobs counts once — `MAX` caps the gap and the warm pool drains the rest. Per-job counting is the obvious upgrade.
+- **Repo-scoped** — it watches one `REPO_URL`. Org-wide autoscaling needs a different demand query.
+- **It counts all of the repo's runs**, so if you also use GitHub-hosted runners in the same repo it may scale up for jobs it can't serve. Dedicate the repo (or its self-hosted jobs) for the cleanest behavior.
+- **Single region** — it scales `RUNNER_REGION` only.
+- At high volume you'd swap polling for `workflow_job` webhooks; the loop in [`autoscaler/autoscale.ts`](autoscaler/autoscale.ts) is small and easy to change.
+
 ## ⚠️ Limitations & security
 
 - **No Docker-in-Docker on Railway.** Railway containers aren't privileged and there's no host Docker socket, so jobs that run `docker build` or use `container:` / service containers **won't work**. Plain build / test / lint / deploy jobs are fine.
