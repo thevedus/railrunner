@@ -51,67 +51,55 @@ jobs:
 
 ## Autoscaling (optional)
 
-Run a second tiny service that watches your job queue and adjusts how many runner replicas Railway runs — up under load, back down (even to zero) when idle.
+Run a second tiny service that listens for GitHub **`workflow_job`** webhooks and adjusts how many runner replicas Railway runs — up the instant jobs are queued, back down (even to zero) when they finish.
 
 ```
-GitHub Actions          autoscaler (autoscaler/)                    Railway
-  queued jobs  ──poll──▶  desired = clamp(demand, MIN, MAX)  ──scale──▶  runner replicas
+GitHub Actions                  autoscaler (autoscaler/)               Railway
+  workflow_job ──webhook──▶  active jobs ──clamp(n, MIN, MAX)──scale──▶  runner replicas
 ```
 
-It **polls** every ~20s and is **stateless** — each check recomputes the target from GitHub, so there's nothing to drift out of sync. Scaling goes through the `railway` CLI, which applies the change gracefully: new replicas start on the existing image, and drained ones finish their current job first.
+It's **event-driven** (no API polling, so no rate limits), **job-accurate** (counts individual `workflow_job`s, filtered by label), and reacts in seconds. One **org-level** webhook covers every repo in the org — that's how you autoscale across many repos. Scaling goes through the `railway` CLI, which applies the change gracefully: new replicas start on the existing image, and drained ones finish their current job first.
 
 ### Deploy it
 
-1. In the **same Railway project** as your runner, add another service from this repo.
-2. Set its **Root Directory** to `autoscaler`.
-3. Create a Railway **project token** (Project → Settings → Tokens) and add the env vars below (full copy-paste list in [`autoscaler/.env.example`](autoscaler/.env.example)).
+1. In the **same Railway project** as your runner, add another service from this repo and set its **Root Directory** to `autoscaler`.
+2. Give it a public URL: Service → Settings → Networking → **Generate Domain**, and copy it.
+3. Add the env vars below (full list in [`autoscaler/.env.example`](autoscaler/.env.example)) — including a `GITHUB_WEBHOOK_SECRET` you choose and a `RAILWAY_TOKEN` (Project → Settings → Tokens).
+4. Add the webhook in GitHub — **repo** *or* **org** → Settings → Webhooks → Add webhook:
+   - **Payload URL**: your Railway domain (e.g. `https://xxx.up.railway.app/`)
+   - **Content type**: `application/json`
+   - **Secret**: the same `GITHUB_WEBHOOK_SECRET`
+   - **Events**: "Let me select individual events" → **Workflow jobs** only
 
-   > Railway's "Suggested Variables" only auto-detects some of these — add `GITHUB_TOKEN`, `REPOS` (or `GITHUB_ORG`), and `RUNNER_SERVICE_ID` yourself, and don't set `RAILWAY_API_TOKEN` (only one Railway token is allowed) or `RAILWAY_CLI_VERSION` (build-time only).
+   > Railway's "Suggested Variables" can't auto-detect every variable — add `GITHUB_WEBHOOK_SECRET` and `RUNNER_SERVICE_ID` yourself, and don't set `RAILWAY_API_TOKEN` (only one Railway token is allowed) or `RAILWAY_CLI_VERSION` (build-time only).
 
 | Variable | Default | What |
 |---|---|---|
-| `GITHUB_TOKEN` | — | PAT with **Actions: Read** on every repo you watch |
-| `REPOS` | — | comma-separated `owner/repo` to watch, e.g. `acme/api,acme/web` |
-| `GITHUB_ORG` | — | watch every active repo in this org (set this and/or `REPOS`) |
+| `GITHUB_WEBHOOK_SECRET` | — | shared secret; must match the webhook's **Secret** |
 | `RAILWAY_TOKEN` | — | a Railway **project token** (lets the CLI scale) |
 | `RUNNER_SERVICE_ID` | — | the **runner** service's ID (Service → Settings) |
 | `RUNNER_REGION` | `us-west` | region your runner runs in (`us-west`, `us-east`, `eu-west`, `southeast-asia`) |
+| `RUNNER_LABELS` | `railrunner` | only count jobs whose `runs-on` includes these labels |
 | `MIN_RUNNERS` | `1` | floor — set `0` to scale to zero when idle |
 | `MAX_RUNNERS` | `5` | ceiling (safety cap) |
-| `POLL_SECONDS` | `20` | how often to check — raise it if you watch many repos |
-| `REPO_REFRESH_SECONDS` | `300` | how often to re-list `GITHUB_ORG` repos |
+| `JOB_TTL_SECONDS` | `3600` | drop a job we never saw finish (covers a missed event); raise above your longest job |
 | `DRY_RUN` | `false` | log decisions without scaling — flip on first to watch it think |
 
-Tip: deploy with `DRY_RUN=true` and read the logs (`demand=… -> desired=…`) until you trust it, then turn it off.
+Tip: deploy with `DRY_RUN=true`, push a job, and watch the logs (`queued job … -> active=1`) before turning it off.
 
-### Configuring the variables on Railway
-
-Railway's **Suggested Variables** panel only auto-detects variables referenced directly in the code, so it under-suggests. Set this exact list — add the three it misses, remove the two it shouldn't offer:
-
-| Variable | Set to | |
-|---|---|---|
-| `GITHUB_TOKEN` | a GitHub PAT with **Actions: Read** on every watched repo | ➕ add (not detected) |
-| `REPOS` / `GITHUB_ORG` | repos to watch — `owner/repo,…` and/or a whole org | ➕ add (not detected) |
-| `RUNNER_SERVICE_ID` | the **runner** service's ID | ➕ add (not detected) |
-| `RAILWAY_TOKEN` | the project token (Railway pre-fills one) | ✅ keep |
-| `RUNNER_REGION` | your runner's region, e.g. `us-west` | ✅ keep — fill the value |
-| `DRY_RUN` | `true` to start | ✅ keep |
-| `RAILWAY_API_TOKEN` | — | ❌ remove — only one Railway token is allowed; both set makes the CLI error |
-| `RAILWAY_CLI_VERSION` | — | ❌ remove — build-time `ARG`, not a runtime variable |
-
-Finding the values:
+### Finding the values
 
 - **`RUNNER_SERVICE_ID`** — open the **runner** service and copy the UUID from its URL: `railway.com/project/…/service/`**`<this-id>`**. Not the autoscaler's own ID — Railway already injects that as `RAILWAY_SERVICE_ID`, which is exactly why this one is named `RUNNER_SERVICE_ID`.
 - **`RUNNER_REGION`** — runner service → Settings → Regions.
-- **`RAILWAY_TOKEN`** — keep Railway's pre-filled value, or mint one under Project → Settings → Tokens. It's a secret — don't commit or share it.
+- **`RAILWAY_TOKEN`** — mint one under Project → Settings → Tokens (or keep Railway's pre-filled value). It's a secret — don't commit or share it.
 
 ### What it deliberately keeps simple
 
-- **Demand is counted per workflow _run_** (one cheap API call each for queued + in-progress). A single run with many matrix jobs counts once — `MAX` caps the gap and the warm pool drains the rest. Per-job counting is the obvious upgrade.
-- **Watches what you point it at** — the repos in `REPOS` and/or every active repo in `GITHUB_ORG` (re-listed every `REPO_REFRESH_SECONDS`). Each repo costs ~2 API calls per poll, so keep `repos × (7200 / POLL_SECONDS)` under GitHub's 5000/hour — raise `POLL_SECONDS` for many repos, or move to `workflow_job` webhooks for large orgs. For org-wide coverage, register the runner itself at org scope (`RUNNER_SCOPE=org`).
-- **It counts all of the repo's runs**, so if you also use GitHub-hosted runners in the same repo it may scale up for jobs it can't serve. Dedicate the repo (or its self-hosted jobs) for the cleanest behavior.
+- **Job-accurate and label-filtered** — each `workflow_job` is counted by its `id`, and only if its labels include every entry in `RUNNER_LABELS` — so it ignores GitHub-hosted jobs and counts matrix jobs individually.
+- **No polling, no GitHub token** — GitHub pushes the events, so there's no API rate limit and one org webhook scales the whole org. The only credentials it needs are the Railway token (to scale) and the webhook secret (to trust GitHub).
+- **In-memory state, self-healing** — the active-job set lives in memory; a missed `completed` event is cleaned up by `JOB_TTL_SECONDS`, and a restart briefly drops to `MIN_RUNNERS` then rebuilds as new events arrive (Railway's graceful drain means running jobs are never killed).
 - **Single region** — it scales `RUNNER_REGION` only.
-- At high volume you'd swap polling for `workflow_job` webhooks; the loop in [`autoscaler/autoscale.ts`](autoscaler/autoscale.ts) is small and easy to change.
+- Bursts (a big matrix) are coalesced into one scale call; the whole server is ~120 lines in [`autoscaler/autoscale.ts`](autoscaler/autoscale.ts).
 
 ## ⚠️ Limitations & security
 
