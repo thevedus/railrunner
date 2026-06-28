@@ -66,18 +66,20 @@ It **polls** every ~20s and is **stateless** — each check recomputes the targe
 2. Set its **Root Directory** to `autoscaler`.
 3. Create a Railway **project token** (Project → Settings → Tokens) and add the env vars below (full copy-paste list in [`autoscaler/.env.example`](autoscaler/.env.example)).
 
-   > Railway's "Suggested Variables" only auto-detects some of these — add `GITHUB_TOKEN`, `REPO_URL`, and `RUNNER_SERVICE_ID` yourself, and don't set `RAILWAY_API_TOKEN` (only one Railway token is allowed) or `RAILWAY_CLI_VERSION` (build-time only).
+   > Railway's "Suggested Variables" only auto-detects some of these — add `GITHUB_TOKEN`, `REPOS` (or `GITHUB_ORG`), and `RUNNER_SERVICE_ID` yourself, and don't set `RAILWAY_API_TOKEN` (only one Railway token is allowed) or `RAILWAY_CLI_VERSION` (build-time only).
 
 | Variable | Default | What |
 |---|---|---|
-| `GITHUB_TOKEN` | — | PAT with **Actions: Read** on the repo |
-| `REPO_URL` | — | `https://github.com/owner/repo` to watch |
+| `GITHUB_TOKEN` | — | PAT with **Actions: Read** on every repo you watch |
+| `REPOS` | — | comma-separated `owner/repo` to watch, e.g. `acme/api,acme/web` |
+| `GITHUB_ORG` | — | watch every active repo in this org (set this and/or `REPOS`) |
 | `RAILWAY_TOKEN` | — | a Railway **project token** (lets the CLI scale) |
 | `RUNNER_SERVICE_ID` | — | the **runner** service's ID (Service → Settings) |
 | `RUNNER_REGION` | `us-west` | region your runner runs in (`us-west`, `us-east`, `eu-west`, `southeast-asia`) |
 | `MIN_RUNNERS` | `1` | floor — set `0` to scale to zero when idle |
 | `MAX_RUNNERS` | `5` | ceiling (safety cap) |
-| `POLL_SECONDS` | `20` | how often to check |
+| `POLL_SECONDS` | `20` | how often to check — raise it if you watch many repos |
+| `REPO_REFRESH_SECONDS` | `300` | how often to re-list `GITHUB_ORG` repos |
 | `DRY_RUN` | `false` | log decisions without scaling — flip on first to watch it think |
 
 Tip: deploy with `DRY_RUN=true` and read the logs (`demand=… -> desired=…`) until you trust it, then turn it off.
@@ -88,8 +90,8 @@ Railway's **Suggested Variables** panel only auto-detects variables referenced d
 
 | Variable | Set to | |
 |---|---|---|
-| `GITHUB_TOKEN` | a GitHub PAT with **Actions: Read** on the repo | ➕ add (not detected) |
-| `REPO_URL` | `https://github.com/<owner>/<repo>` | ➕ add (not detected) |
+| `GITHUB_TOKEN` | a GitHub PAT with **Actions: Read** on every watched repo | ➕ add (not detected) |
+| `REPOS` / `GITHUB_ORG` | repos to watch — `owner/repo,…` and/or a whole org | ➕ add (not detected) |
 | `RUNNER_SERVICE_ID` | the **runner** service's ID | ➕ add (not detected) |
 | `RAILWAY_TOKEN` | the project token (Railway pre-fills one) | ✅ keep |
 | `RUNNER_REGION` | your runner's region, e.g. `us-west` | ✅ keep — fill the value |
@@ -106,7 +108,7 @@ Finding the values:
 ### What it deliberately keeps simple
 
 - **Demand is counted per workflow _run_** (one cheap API call each for queued + in-progress). A single run with many matrix jobs counts once — `MAX` caps the gap and the warm pool drains the rest. Per-job counting is the obvious upgrade.
-- **Repo-scoped** — it watches one `REPO_URL`. Org-wide autoscaling needs a different demand query.
+- **Watches what you point it at** — the repos in `REPOS` and/or every active repo in `GITHUB_ORG` (re-listed every `REPO_REFRESH_SECONDS`). Each repo costs ~2 API calls per poll, so keep `repos × (7200 / POLL_SECONDS)` under GitHub's 5000/hour — raise `POLL_SECONDS` for many repos, or move to `workflow_job` webhooks for large orgs. For org-wide coverage, register the runner itself at org scope (`RUNNER_SCOPE=org`).
 - **It counts all of the repo's runs**, so if you also use GitHub-hosted runners in the same repo it may scale up for jobs it can't serve. Dedicate the repo (or its self-hosted jobs) for the cleanest behavior.
 - **Single region** — it scales `RUNNER_REGION` only.
 - At high volume you'd swap polling for `workflow_job` webhooks; the loop in [`autoscaler/autoscale.ts`](autoscaler/autoscale.ts) is small and easy to change.
