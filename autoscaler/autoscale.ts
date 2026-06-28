@@ -7,9 +7,13 @@
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-/** Clamp demand into [min, max]. */
-export function desiredReplicas(demand: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, demand));
+/** Target replica count. Scale UP to demand immediately, but only scale DOWN once
+ * fully idle (active === 0). Railway can't choose which replica to remove, so
+ * shrinking while a job runs risks dropping the busy one and canceling it — we
+ * instead hold the high-water mark until every job drains, then fall to the floor. */
+export function targetReplicas(active: number, applied: number, min: number, max: number): number {
+  if (active === 0) return min;
+  return Math.min(max, Math.max(applied, active, min));
 }
 
 /** Verify GitHub's X-Hub-Signature-256 over the raw body, in constant time. */
@@ -91,7 +95,7 @@ async function main(): Promise<void> {
     try {
       do {
         dirty = false;
-        const want = desiredReplicas(jobs.size, min, max);
+        const want = targetReplicas(jobs.size, applied, min, max);
         if (want !== applied) { await railwayScale(serviceId, region, want, dryRun); applied = want; }
       } while (dirty);
     } catch (e) {

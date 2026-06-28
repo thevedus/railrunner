@@ -1,11 +1,12 @@
 import { test, expect } from "bun:test";
-import { desiredReplicas, verifySignature, jobMatches } from "./autoscale";
+import { targetReplicas, verifySignature, jobMatches } from "./autoscale";
 
-test("clamps demand into [min, max]", () => {
-  expect(desiredReplicas(0, 1, 5)).toBe(1); // idle -> floor
-  expect(desiredReplicas(3, 1, 5)).toBe(3); // within range -> passthrough
-  expect(desiredReplicas(9, 1, 5)).toBe(5); // burst -> ceiling
-  expect(desiredReplicas(0, 0, 5)).toBe(0); // scale-to-zero when idle
+test("targetReplicas scales up to demand but only down when idle", () => {
+  expect(targetReplicas(2, 0, 0, 5)).toBe(2); // demand 2 -> up to 2
+  expect(targetReplicas(1, 2, 0, 5)).toBe(2); // one job finished -> hold at 2 (don't kill the busy one)
+  expect(targetReplicas(0, 2, 0, 5)).toBe(0); // all idle -> drop to floor
+  expect(targetReplicas(9, 2, 0, 5)).toBe(5); // burst capped at max
+  expect(targetReplicas(0, 3, 1, 5)).toBe(1); // idle with floor 1
 });
 
 test("verifySignature matches GitHub's documented HMAC example", () => {
