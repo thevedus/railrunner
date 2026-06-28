@@ -63,7 +63,7 @@ It's **event-driven** (no API polling, so no rate limits), **job-accurate** (cou
 ### Deploy it
 
 1. In the **same Railway project** as your runner, add another service from this repo and set its **Root Directory** to `autoscaler`.
-2. Give it a public URL: Service → Settings → Networking → **Generate Domain**, and copy it.
+2. Give it a public URL: Service → Settings → Networking → **Generate Domain** → enter port **`8080`** (what the autoscaler listens on), then copy the URL. *(The server binds `$PORT`, default `8080`; pin it by also setting a `PORT=8080` variable so the listening port and the domain port can't drift.)*
 3. Add the env vars below (full list in [`autoscaler/.env.example`](autoscaler/.env.example)) — including a `GITHUB_WEBHOOK_SECRET` you choose and a `RAILWAY_TOKEN` (Project → Settings → Tokens).
 4. Add the webhook in GitHub — **repo** *or* **org** → Settings → Webhooks → Add webhook:
    - **Payload URL**: your Railway domain (e.g. `https://xxx.up.railway.app/`)
