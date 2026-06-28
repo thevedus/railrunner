@@ -157,9 +157,10 @@ async function main(): Promise<void> {
     },
   });
 
+  const build = process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 7) ?? "image";
   console.log(
-    `railrunner autoscaler (webhook): listening on :${port}, labels=[${markers.join(",")}], ` +
-    `scaling ${serviceId} in ${region}, min=${min} max=${max}${dryRun ? " (DRY RUN)" : ""}`,
+    `railrunner autoscaler (webhook, link+scale, build=${build}): listening on :${port}, ` +
+    `labels=[${markers.join(",")}], scaling ${serviceId} in ${region}, min=${min} max=${max}${dryRun ? " (DRY RUN)" : ""}`,
   );
   void applyScale(); // establish the MIN floor on boot
 }
