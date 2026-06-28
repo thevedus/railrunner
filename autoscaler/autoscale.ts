@@ -50,25 +50,13 @@ async function railway(args: string[]): Promise<string> {
   return (out || err).trim();
 }
 
-/** Link this project + environment + service so `railway scale` has context.
- * The CLI's `scale --project/--environment` flags don't set context on their own
- * (scale needs a *linked* project); Railway injects these IDs into the service. */
-async function railwayLink(serviceId: string): Promise<void> {
-  const project = process.env.RAILWAY_PROJECT_ID;
-  const env = process.env.RAILWAY_ENVIRONMENT_ID ?? process.env.RAILWAY_ENVIRONMENT;
-  if (!project || !env) {
-    console.warn("RAILWAY_PROJECT_ID / RAILWAY_ENVIRONMENT_ID not set — can't link; scaling will fail. (Running outside Railway?)");
-    return;
-  }
-  await railway(["link", "--project", project, "--environment", env, "--service", serviceId]);
-  console.log(`linked project=${project} env=${env} service=${serviceId}`);
-}
-
-/** Set the linked runner service's replica count in one region. */
-async function railwayScale(region: string, n: number, dryRun: boolean): Promise<void> {
-  if (dryRun) { console.log(`[dry-run] railway scale ${region}=${n}`); return; }
-  await railway(["scale", `${region}=${n}`]);
-  console.log(`scaled -> ${region}=${n}`);
+/** Set the runner service's replica count in one region. Inside Railway the CLI
+ * auto-detects project + environment from the injected RAILWAY_* vars, so we only
+ * pass --service to target the runner (not this autoscaler's own service). */
+async function railwayScale(serviceId: string, region: string, n: number, dryRun: boolean): Promise<void> {
+  if (dryRun) { console.log(`[dry-run] railway scale --service ${serviceId} ${region}=${n}`); return; }
+  await railway(["scale", "--service", serviceId, `${region}=${n}`]);
+  console.log(`scaled ${serviceId} -> ${region}=${n}`);
 }
 
 async function main(): Promise<void> {
@@ -104,7 +92,7 @@ async function main(): Promise<void> {
       do {
         dirty = false;
         const want = desiredReplicas(jobs.size, min, max);
-        if (want !== applied) { await railwayScale(region, want, dryRun); applied = want; }
+        if (want !== applied) { await railwayScale(serviceId, region, want, dryRun); applied = want; }
       } while (dirty);
     } catch (e) {
       console.error("scale error:", (e as Error).message);
@@ -125,9 +113,6 @@ async function main(): Promise<void> {
     for (const [id, exp] of jobs) if (exp <= now) { jobs.delete(id); changed = true; }
     if (changed) scheduleScale();
   }, 60_000);
-
-  // Establish project/environment/service context so `railway scale` works.
-  try { await railwayLink(serviceId); } catch (e) { console.error("link error:", (e as Error).message); }
 
   Bun.serve({
     port,
@@ -159,7 +144,7 @@ async function main(): Promise<void> {
 
   const build = process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 7) ?? "image";
   console.log(
-    `railrunner autoscaler (webhook, link+scale, build=${build}): listening on :${port}, ` +
+    `railrunner autoscaler (webhook, build=${build}): listening on :${port}, ` +
     `labels=[${markers.join(",")}], scaling ${serviceId} in ${region}, min=${min} max=${max}${dryRun ? " (DRY RUN)" : ""}`,
   );
   void applyScale(); // establish the MIN floor on boot
