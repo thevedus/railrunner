@@ -60,6 +60,8 @@ GitHub Actions                  autoscaler (autoscaler/)               Railway
 
 It's **event-driven** (no API polling, so no rate limits), **job-accurate** (counts individual `workflow_job`s, filtered by label), and reacts in seconds. One **org-level** webhook covers every repo in the org — that's how you autoscale across many repos. Scaling goes through the `railway` CLI, which applies the change gracefully: new replicas start on the existing image, and drained ones finish their current job first.
 
+> **This is a _second_ service.** It does **not** run any jobs — it only changes the replica count of your **runner** service (the one from [Deploy](#deploy) above). Deploy the runner first. `RUNNER_SERVICE_ID` must be the **runner's** ID, never this autoscaler's own — pointing it at itself means no real runners exist, and (once `DRY_RUN=false`) it would scale the autoscaler to zero and kill it.
+
 ### Deploy it
 
 1. In the **same Railway project** as your runner, add another service from this repo and set its **Root Directory** to `autoscaler`.
